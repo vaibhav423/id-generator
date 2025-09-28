@@ -1,3 +1,10 @@
+
+
+# The Project is to demonstrate , the core working of Snowflake-algorithm (used in backend system of x.com)
+# it does not contain any frontend component , the package main.go can be imported and used per user's-interest 
+
+
+
 # Content
 
 - [Core Logic](#core-logic)
