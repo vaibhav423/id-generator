@@ -1,99 +1,70 @@
 package main
-	
+
 import (
+	"bufio"
+	"flag"
 	"fmt"
 	"idgenerator"
 	"log"
-	"sync"
+	"os"
+	"strconv"
+	"time"
 )
 
-	func main() {
-	// Create a new ID generator with a simple machine ID function
-	gen, err := idgenerator.New(idgenerator.Settings{
+func main() {
+	// Define command-line flags
+	machineID := flag.Uint("m", 1, "Machine ID (0-1023)")
+	numIDs := flag.Int("n", 100, "Number of IDs to generate")
+	outputFile := flag.String("o", "generated_ids.txt", "Output file name")
+	flag.Parse()
+
+	// Validate Machine ID
+	if *machineID > idgenerator.MaxMachineID {
+		log.Fatalf("Error: Machine ID %d is out of the valid range (0-%d).\n", *machineID, idgenerator.MaxMachineID)
+	}
+
+	// 1. Initialize the ID Generator with the provided machine ID
+	st := idgenerator.Settings{
+		StartTime: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		MachineID: func() (uint16, error) {
-			// In a real application, this could be derived from the hostname,
-			// MAC address, or some other unique machine identifier
-			return 42, nil
+			return uint16(*machineID), nil
 		},
-		CheckMachineID: func(id uint16) bool {
-			// Optional validation function
-			return id > 0 && id < 1000
-		},
-	})
+	}
+	gen, err := idgenerator.New(st)
 	if err != nil {
 		log.Fatalf("Failed to create ID generator: %v", err)
 	}
 
-	fmt.Println("ID Generator Demo")
-	fmt.Println("================")
+	// 2. Create the output file
+	file, err := os.Create(*outputFile)
+	if err != nil {
+		log.Fatalf("Failed to create output file: %v", err)
+	}
+	defer file.Close()
 
-	// Generate some IDs sequentially
-	fmt.Println("\nSequential ID generation:")
-	for i := 0; i < 10; i++ {
+	writer := bufio.NewWriter(file)
+
+	fmt.Printf("Generating %d IDs with Machine ID %d into file '%s'...\n", *numIDs, *machineID, *outputFile)
+
+	// 3. Generate and write IDs to the file
+	start := time.Now()
+	for i := 0; i < *numIDs; i++ {
 		id, err := gen.NextID()
 		if err != nil {
-			log.Fatalf("Failed to generate ID: %v", err)
+			log.Printf("Error generating ID: %v", err)
+			continue
 		}
-		fmt.Printf("ID %2d: %d\n", i+1, id)
-	}
-
-	// Test concurrent generation
-	fmt.Println("\nConcurrent ID generation (10 goroutines, 5 IDs each):")
-	var wg sync.WaitGroup
-	idChan := make(chan uint64, 50)
-
-	// Launch 10 goroutines
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(routineNum int) {
-			defer wg.Done()
-			for j := 0; j < 5; j++ {
-				id, err := gen.NextID()
-				if err != nil {
-					log.Printf("Failed to generate ID in routine %d: %v", routineNum, err)
-					return
-				}
-				idChan <- id
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(idChan)
-
-	// Collect and sort IDs to show they're unique
-	ids := make([]uint64, 0, 50)
-	for id := range idChan {
-		ids = append(ids, id)
-	}
-
-	// Simple sort to demonstrate uniqueness
-	for i := 0; i < len(ids); i++ {
-		for j := i + 1; j < len(ids); j++ {
-			if ids[i] > ids[j] {
-				ids[i], ids[j] = ids[j], ids[i]
-			}
+		// Write the ID to the file, followed by a newline
+		_, err = writer.WriteString(strconv.FormatUint(id, 10) + "\n")
+		if err != nil {
+			log.Fatalf("Failed to write to file: %v", err)
 		}
 	}
 
-	fmt.Printf("Generated %d unique IDs concurrently:\n", len(ids))
-	for i, id := range ids {
-		fmt.Printf("%2d: %d\n", i+1, id)
-	}
+	// Ensure all buffered operations have been applied to the underlying writer
+	writer.Flush()
+	duration := time.Since(start)
 
-	// Demonstrate ID component extraction
-	fmt.Println("\nID Component Analysis (last generated ID):")
-	if len(ids) > 0 {
-		lastID := ids[len(ids)-1]
-
-		// Extract components using bit operations
-		sequence := uint16(lastID & idgenerator.MaxSequence)
-		machineID := uint16((lastID >> idgenerator.BitLenSequence) & idgenerator.MaxMachineID)
-		elapsedTime := int64(lastID >> (idgenerator.BitLenSequence + idgenerator.BitLenMachineID))
-
-		fmt.Printf("Full ID:      %d\n", lastID)
-		fmt.Printf("Time:         %d (elapsed 10ms units)\n", elapsedTime)
-		fmt.Printf("Machine ID:   %d\n", machineID)
-		fmt.Printf("Sequence:     %d\n", sequence)
-	}
+	fmt.Printf("Successfully generated and saved %d IDs in %v.\n", *numIDs, duration)
+	fmt.Printf("Check the '%s' file for the results.\n", *outputFile)
 }

@@ -97,43 +97,42 @@ machineID:   machineID,
 
 // NextID generates the next unique ID. Must be concurrency-safe.
 func (g *IDGenerator) NextID() (uint64, error) {
-// Lock g.mutex at the start of the critical section and defer Unlock.
-g.mutex.Lock()
-defer g.mutex.Unlock()
+	// Lock g.mutex at the start of the critical section and defer Unlock.
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
 
-// Compute current elapsed time units using currentElapsedTime(g.startTime).
-currentElapsed := currentElapsedTime(g.startTime)
+	// Compute current elapsed time units using currentElapsedTime(g.startTime).
+	currentElapsed := currentElapsedTime(g.startTime)
 
-// If current time has moved forward, reset sequence and update elapsed time
-if currentElapsed > g.elapsedTime {
-g.elapsedTime = currentElapsed
-g.sequence = 0
-} else if currentElapsed < g.elapsedTime {
-// We're ahead of real time, need to wait
-overtime := g.elapsedTime - currentElapsed
-time.Sleep(sleepTime(overtime))
-// After sleeping, update to current time
-g.elapsedTime = currentElapsedTime(g.startTime)
-g.sequence = 0
-}
+	// If current time has moved forward, reset sequence and update elapsed time
+	if currentElapsed > g.elapsedTime {
+		g.elapsedTime = currentElapsed
+		g.sequence = 0
+	} else if currentElapsed < g.elapsedTime {
+		// We're ahead of real time, need to wait
+		overtime := g.elapsedTime - currentElapsed
+		time.Sleep(sleepTime(overtime))
+		// After sleeping, update to current time
+		g.elapsedTime = currentElapsedTime(g.startTime)
+		g.sequence = 0
+	}
 
-// Increment sequence
-g.sequence++
+	// Check if sequence would exceed maximum before incrementing
+	if g.sequence >= MaxSequence {
+		// Sequence would overflow, advance to next time unit
+		g.elapsedTime++
+		overtime := g.elapsedTime - currentElapsedTime(g.startTime)
+		if overtime > 0 {
+			time.Sleep(sleepTime(overtime))
+		}
+		g.sequence = 0 // Reset sequence for new time unit
+	}
 
-// Use maskSequence to check if sequence wraps
-maskSequence := uint16(1<<BitLenSequence - 1)
-if (g.sequence & maskSequence) == 0 {
-// Sequence wrapped, increment elapsed time and sleep
-g.elapsedTime++
-overtime := g.elapsedTime - currentElapsedTime(g.startTime)
-if overtime > 0 {
-time.Sleep(sleepTime(overtime))
-}
-g.sequence = 1 // Reset to 1 since we just incremented
-}
+	// Now increment sequence safely
+	g.sequence++
 
-// Call g.toID() to pack fields and return the value.
-return g.toID()
+	// Call g.toID() to pack fields and return the value.
+	return g.toID()
 }
 
 // Helpers you must implement:
@@ -157,6 +156,31 @@ func sleepTime(overtime int64) time.Duration {
 return time.Duration(overtime) * generatorTimeUnit
 }
 
+// DecomposedID represents the components of a generated ID.
+type DecomposedID struct {
+	Time      int64
+	MachineID uint16
+	Sequence  uint16
+}
+
+// Decompose breaks down a uint64 ID into its constituent parts.
+func Decompose(id uint64) DecomposedID {
+	// The masks are created by taking the maximum value for each part.
+	const maskSequence = uint64(MaxSequence)
+	const maskMachineID = uint64(MaxMachineID)
+
+	// Extract the parts using bitwise operations.
+	sequence := uint16(id & maskSequence)
+	machineID := uint16((id >> BitLenSequence) & maskMachineID)
+	idTime := int64(id >> (BitLenMachineID + BitLenSequence))
+
+	return DecomposedID{
+		Time:      idTime,
+		MachineID: machineID,
+		Sequence:  sequence,
+	}
+}
+
 // toID packs internal fields into a uint64 ID, or returns an error.
 func (g *IDGenerator) toID() (uint64, error) {
 // Check for overflow conditions
@@ -177,4 +201,3 @@ uint64(g.sequence)
 
 return id, nil
 }
-
